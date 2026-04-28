@@ -1,5 +1,8 @@
 # Evaluation Criteria
 
+> **Guiding principle: clarity is preferred over complexity.**
+> A simple, readable agent that handles four VS tests correctly and explains its reasoning will outscore a clever multi-layer system whose behaviour reviewers cannot follow. If you have to choose between adding a feature and making your existing work easier to read, choose readability.
+
 We grade on six dimensions. Each is weighted equally unless noted.
 
 | # | Dimension | What we look for |

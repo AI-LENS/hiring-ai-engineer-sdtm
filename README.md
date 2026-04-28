@@ -26,6 +26,8 @@ Build an **agentic AI in Python** that converts raw clinical-trial vital-signs d
 
 You are graded on how you design the agent — not how well you write R.
 
+> **Clarity is preferred over complexity.** A simple, readable agent that handles a few VS tests well will outscore a clever multi-layer system reviewers can't follow.
+
 ---
 
 ## Read in this order (≈ 25 minutes total)

@@ -61,6 +61,10 @@ Cover at least **TEMP, SYSBP, DIABP, PULSE** end-to-end through `VSORRES` / `VSO
 - Convert dates to ISO 8601 `VSDTC`.
 - Wire visit info (`VISIT`, `VISITNUM`).
 
+## Clarity over complexity
+
+If you find yourself adding a fourth abstraction layer, an extra agent, or a fancier framework feature — stop and ask whether your existing code reads clearly. Reviewers reward solutions they can follow. A flat, well-named pipeline beats a clever graph almost every time in this exercise.
+
 ## What we don't want
 
 - A Python rewrite of `create_vs.R` with no agent loop.
