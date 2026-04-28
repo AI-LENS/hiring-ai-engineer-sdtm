@@ -9,7 +9,7 @@ Build an **agentic AI in Python** that converts raw clinical-trial vital-signs d
 | | |
 |---|---|
 | **Role** | AI Engineer |
-| **Round** | Stage 2 — Live Agentic Build |
+| **Round** | Round 2 — Live Agentic Build |
 | **You write** | **Python.** No R or SAS knowledge required. |
 | **You orchestrate** | An agent that calls `sdtm.oak` (R) via subprocess. |
 | **Submission deadline** | **Today, 18:00 (6:00 PM) IST** |
