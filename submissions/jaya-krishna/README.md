@@ -1,84 +1,27 @@
-\# SDTM Vital Signs Automation Agent
+cls# SDTM Vital Signs Automation Agent
 
+## Setup
+Ensure you have Python 3.10+ and R 4.0+ installed.
+1. Add your API key to a `.env` file: `GOOGLE_API_KEY=your_key`
+2. Create and activate a virtual environment: `python -m venv venv` & `.\venv\Scripts\activate`
+3. Install dependencies: `pip install -r requirements.txt`
+4. Run the pipeline: `python run.py`
+*(Note: The script will automatically download necessary R packages via subprocess if missing).*
 
+## Architecture
+This agent utilizes a **Cyclic LangGraph State Machine** powered by Gemini 1.5 Flash. It strictly separates probabilistic reasoning from deterministic execution. The AI acts as an orchestrator: it reads schemas via a tool, injects a canonical `sdtm.oak` script, executes it via a Python subprocess, and relies on a strict Pandas-based validation tool to mathematically grade the output. If validation fails, the agent reads the `stderr`, updates the code, and loops until success (capped at 5 iterations).
 
-An AI-powered data engineering pipeline designed to automate the transformation of raw clinical vital signs data into a CDISC-compliant SDTM (`VS`) dataset. 
+## What Works
+* The agent successfully maps all required VS tests (TEMP, SYSBP, DIABP, PULSE).
+* Full CDISC Controlled Terminology compliance for C66741 (VSTESTCD), C67153 (VSTEST), and C66770 (VSORRESU).
+* Mathematical validation passes, ensuring exact row counts and no missing mandatory SDTM variables.
 
+## What Doesn't / What's Next
+* **Dynamic R Generation:** Currently, the agent relies on an injected canonical script to prevent hallucinating non-existent `sdtm.oak` functions. The next step is feeding the agent the raw PDF aCRF specs so it can generate the R mapping syntax entirely from scratch.
+* **Domain Agnosticism:** The validator currently hardcodes VS-specific codelists. A production version would dynamically fetch rules based on the target domain (DM, AE, etc.).
 
-
-This project utilizes a \*\*Cyclic LangGraph State Machine\*\* powered by Google's `gemini-1.5-flash` model. The AI agent acts as an orchestrator, writing, executing, and mathematically validating deterministic R code using the `sdtm.oak` package.
-
-
-
-\## 🏗️ Architecture
-
-
-
-To ensure strict data integrity and eliminate LLM hallucinations, the pipeline separates probabilistic reasoning from deterministic execution:
-
-
-
-1\. \*\*The Brain (LangGraph + Gemini 1.5 Flash):\*\* Manages the state, decides which tools to call, and interprets compilation or validation errors to self-correct code.
-
-2\. \*\*The Hands (Python Subprocesses):\*\* Securely writes R code to disk and triggers isolated execution.
-
-3\. \*\*The Engine (R + sdtm.oak):\*\* Performs the actual data mapping, utilizing `generate\_oak\_id\_vars()`, `assign\_no\_ct()`, and `hardcode\_ct()` to map data directly into long-format SDTM.
-
-4\. \*\*The Judge (Pandas Validation):\*\* Mathematically validates the output against SDTM structural requirements and CDISC Controlled Terminology (Codelists: C66741, C67153, C66770).
-
-
-
-\### Execution Flow
-
-1\. \*\*`get\_data\_schemas`\*\*: Reads raw data headers and exact Controlled Terminology rules.
-
-2\. \*\*`execute\_r\_script`\*\*: Injects a canonical `sdtm.oak` mapping script, anchors the working directory, and runs the R subprocess.
-
-3\. \*\*`validate\_sdtm\_output`\*\*: Checks for missing values, mandatory columns, and strict CT alignment.
-
-4\. \*\*Self-Correction Loop\*\*: If validation fails, the agent reads the `stderr`, updates the code, and cycles back to step 2 (capped at a `MAX\_ITERATIONS` limit to prevent infinite loops).
-
-
-
-\---
-
-
-
-\## 📂 Project Structure
-
-
-
-```text
-
-hiring-ai-engineer-sdtm/
-
-├── agent/                   # Core agentic logic
-
-│   ├── graph.py             # LangGraph state machine \& LLM routing
-
-│   └── tools.py             # Python-to-R tool definitions and validation logic
-
-├── csv\_files/               # Input data dependencies
-
-│   ├── vs\_raw.csv           # Raw source data
-
-│   ├── sdtm\_ct.csv          # CDISC Controlled Terminology lookup
-
-│   └── vs\_golden.csv        # Expected outcome (for reference)
-
-├── output/                  # Generated artifacts (created at runtime)
-
-│   ├── vs.csv               # The final SDTM dataset
-
-│   ├── generated.R          # The R script executed by the agent
-
-│   └── validation\_report.md # CT compliance and shape metrics
-
-├── .env                     # Private environment variables (API keys)
-
-├── requirements.txt         # Python dependencies
-
-├── run.py                   # Main execution entry point
-
-└── notes.md                 # Execution monologue and reasoning log
-
+## Time Spent (Approx. 6.5 Hours)
+* **Setup & R Environment config:** ~1.5 hour
+* **Agent Flow & LangGraph Architecture:** ~1.5 hours
+* **R Subprocess & Pandas Validation Logic:** ~1.5 hours
+* **Debugging & Pipeline Hardening:** ~1.5 minutes
