@@ -1,0 +1,1 @@
+# SDTM Agent Validation Report\n- **Status:** SUCCESS\n- **Engine:** LangChain + Groq (Llama 3.1)\n- **Note:** SDTM VS domain file generated successfully via dplyr-based orchestration.\n
