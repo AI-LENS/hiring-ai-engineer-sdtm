@@ -1,0 +1,15 @@
+[project]
+name = "clinical-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dotenv>=0.9.9",
+    "openai>=2.33.0",
+    "pandas>=3.0.2",
+    "python-dotenv>=1.2.2",
+    "requests>=2.33.1",
+    "rich>=15.0.0",
+    "tabulate>=0.10.0",
+]
