@@ -1,0 +1,49 @@
+{
+	"folders": [
+		{
+			"path": "../eda"
+		},
+		{
+			"path": "../musical"
+		},
+		{
+			"path": "../tourism-portal"
+		},
+		{
+			"path": "../bunny"
+		},
+		{
+			"path": "../deplopyment"
+		},
+		{
+			"path": "../activty_eda"
+		},
+		{
+			"path": "../car_price_prediction"
+		},
+		{
+			"path": "../video processing"
+		},
+		{
+			"path": "../Cricket Win prediction project"
+		},
+		{
+			"path": "../bangalore house pred"
+		},
+		{
+			"path": "../abhishek technologies"
+		},
+		{
+			"path": "../CHATBOT"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../ailens"
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "CHATBOT"
+	}
+}

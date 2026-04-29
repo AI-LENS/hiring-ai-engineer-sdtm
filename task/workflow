@@ -1,0 +1,68 @@
+# What i understood-
+we need to create a agent which convert the messy data (clinical data) to SDTM format. \
+i have checked the vitial_raw_data.csv and there are many columns defined in the form of keywords by which we can tell the column meaning:
+
+PATNUM-Patient ID \
+SYS_BP-Systolic BP \
+DIA_BP-Diastolic BP \
+PULSE-Heart rate \
+TEMP-Temperature \
+SUBPOS-Body position \
+TEMPLOC-Location 
+
+by analyzing the columns we can decode that what each column mean.
+
+
+# Datasets
+
+sdtm_ct.csv file indicates what values are allowed and maps raw values/synonyms to standard values \
+vitals_raw_data.csv file represent the raw data on which we have to work to make it into standardized form \
+vs_golden.csv- it is used to validate the output
+
+
+# is there any need of frameworks or LLM?
+
+after carefully evaluating the task i understand that this is rule-based and deterministic.\
+therefore, this task does'nt need any LLM or framework \
+all we need is a structured and transperant pipeline. 
+
+LLMs are probabilistic but SDTM need to be exactly correct. 
+
+from sdtm.oak we already act as a Defined API.. 
+
+we doesn't need any natural language for a csv file output.
+
+# workflow
+
+1) took a look in raw_data and controlled terminologies ( THIS ACTS AS INPUT LAYER) 
+2) now transform the raw_data using mapping like  
+SYS_BP → SYSBP  
+DIA_BP → DIABP  
+TEMP → TEMP  
+PULSE → PULSE... \
+( THIS ACTS AS PLANNER) 
+3) Converted wide format to long format i.e one row is converted to multiple rows-one per test 
+4) i generated new SDTM variable i.e \
+STUDYID, USUBJID  
+VSTESTCD  
+VSORRES, VSORRESU  
+VSSTRESC, VSSTRESU  
+VSPOS, VSLOC
+5) Generated a R.script so that there is no need of manually tranformation everytime. 
+6) Then executed R.script via python
+7) it produced a output file i.e vs.csv -----> THIS IS FINAL SDTM DATASET
+8) i have validated the output that are there required columns, CT values, structure, and compared it with golden dataset.
+
+# Why this Should be done and how it is used?
+
+This project is needed to convert messy clinical trial data into a standardized format (SDTM) required by regulators like the FDA. 
+
+generally hospitals collect the raw data from the patients but it may be messy, contain missing values, no standard names etc..\
+so by this agent we can standardize the raw data according to the agencies \
+we are simply automating the process instead of manual work.
+
+
+
+# what is the output
+
+vs.csv is the aquired sdtm file
