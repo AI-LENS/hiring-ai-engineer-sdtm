@@ -1,0 +1,11 @@
+Generated rows: 27331
+Golden rows: 29643
+Missing columns: {'VSBLFL', 'VSDY', 'VSSTAT', 'VSTPTREF', 'VSTPT', 'VSELTM', 'VISITDY', 'VSTPTNUM'}
+✔ Required columns present
+
+CT Validation:
+VSPOS: 0 invalid values
+VSLOC: 0 invalid values
+VSORRESU: 0 invalid values
+Missing VSORRES values: 0
+Unique subjects: 254
