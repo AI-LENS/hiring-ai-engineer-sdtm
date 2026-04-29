@@ -1,0 +1,8 @@
+# Secure Environment Variables
+.env
+
+venv/
+
+# Python Cache
+__pycache__/
+*.pyc
