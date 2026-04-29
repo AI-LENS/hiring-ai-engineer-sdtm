@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 .env
+*.csv
 !docs/sample/*.csv
 .Rhistory
 .Rproj.user/
