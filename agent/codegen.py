@@ -1,0 +1,386 @@
+"""
+agent/codegen.py
+
+This file takes the mapping plan produced by the LLM and turns it into
+a working R script that uses the sdtm.oak package to transform raw
+vital signs data into the SDTM VS domain format.
+
+This file does NOT call the LLM. It is pure Python logic that builds
+the R script text from the mapping plan structure.
+
+The R script it generates follows the sdtm.oak pipeline pattern:
+  raw data -> generate_oak_id_vars -> hardcode_ct / assign_no_ct / assign_ct -> bind_rows -> write.csv
+"""
+
+
+def build_r_script(mapping_plan, raw_path, ct_path, output_path):
+    """
+    Generate a complete R script string based on the mapping plan.
+
+    The R script will:
+    1. Load required libraries
+    2. Read raw data and CT data from the given paths
+    3. Add oak tracking columns with generate_oak_id_vars
+    4. Build one pipeline per VS test (TEMP, SYSBP, DIABP, PULSE)
+    5. Combine all test datasets with bind_rows
+    6. Add common SDTM variables (STUDYID, DOMAIN, USUBJID, etc.)
+    7. Select and reorder columns
+    8. Write the output CSV
+
+    Args:
+        mapping_plan: A list of dicts, each describing one mapping operation.
+                      Keys: raw_column, sdtm_variable, oak_function, ct_codelist,
+                            test_code, tgt_val, notes
+        raw_path: File path to the raw VS CSV (e.g. data/vs_raw.csv)
+        ct_path: File path to the SDTM controlled terminology CSV (e.g. data/sdtm_ct.csv)
+        output_path: File path where the output VS CSV should be written (e.g. output/vs.csv)
+
+    Returns:
+        A string containing the complete R script text.
+    """
+
+    # Build the mapping plan into a lookup so we can find mappings by test_code + sdtm_variable.
+    # This makes it easy to look up which raw column to use for each SDTM variable per test.
+    mapping_lookup = {}
+    for entry in mapping_plan:
+        test_code = entry.get("test_code", "")
+        sdtm_var = entry.get("sdtm_variable", "")
+        key = f"{test_code}_{sdtm_var}"
+        mapping_lookup[key] = entry
+
+    # Define the four VS tests and their raw column names.
+    # These are the columns expected in the pharmaverse vs_raw dataset.
+    # If the mapping plan specifies different columns, those take priority below.
+    test_definitions = [
+        {
+            "test_code": "TEMP",
+            "test_label": "Temperature",
+            "raw_result_col": _find_raw_col(mapping_lookup, "TEMP", "VSORRES", "IT.TEMP"),
+            "raw_unit": "F",
+            "sdtm_unit": "F",
+            "std_unit": "C",
+            "raw_loc_col": _find_raw_col(mapping_lookup, "TEMP", "VSLOC", "IT.TEMP_LOC"),
+            "has_location": True,
+            "has_position": False,
+            "needs_unit_conversion": True,
+            "unit_codelist": "C66770",
+            "loc_codelist": "C74456",
+        },
+        {
+            "test_code": "SYSBP",
+            "test_label": "Systolic Blood Pressure",
+            "raw_result_col": _find_raw_col(mapping_lookup, "SYSBP", "VSORRES", "SYS_BP"),
+            "raw_unit": "mmHg",
+            "sdtm_unit": "mmHg",
+            "std_unit": "mmHg",
+            "raw_pos_col": _find_raw_col(mapping_lookup, "SYSBP", "VSPOS", "SUBPOS"),
+            "has_location": False,
+            "has_position": True,
+            "needs_unit_conversion": False,
+            "unit_codelist": "C66770",
+            "pos_codelist": "C71148",
+        },
+        {
+            "test_code": "DIABP",
+            "test_label": "Diastolic Blood Pressure",
+            "raw_result_col": _find_raw_col(mapping_lookup, "DIABP", "VSORRES", "DIA_BP"),
+            "raw_unit": "mmHg",
+            "sdtm_unit": "mmHg",
+            "std_unit": "mmHg",
+            "raw_pos_col": _find_raw_col(mapping_lookup, "DIABP", "VSPOS", "SUBPOS"),
+            "has_location": False,
+            "has_position": True,
+            "needs_unit_conversion": False,
+            "unit_codelist": "C66770",
+            "pos_codelist": "C71148",
+        },
+        {
+            "test_code": "PULSE",
+            "test_label": "Pulse Rate",
+            "raw_result_col": _find_raw_col(mapping_lookup, "PULSE", "VSORRES", "PULSE"),
+            "raw_unit": "beats/min",
+            "sdtm_unit": "beats/min",
+            "std_unit": "beats/min",
+            "raw_pos_col": _find_raw_col(mapping_lookup, "PULSE", "VSPOS", "SUBPOS"),
+            "has_location": False,
+            "has_position": True,
+            "needs_unit_conversion": False,
+            "unit_codelist": "C66770",
+            "pos_codelist": "C71148",
+        },
+    ]
+
+    # Build the R script line by line, collecting all lines into a list
+    # and joining at the end so it is easy to add or remove sections.
+    script_lines = []
+
+    # --- Section 1: Script header comment ---
+    script_lines.append("# Generated R script for SDTM VS domain transformation")
+    script_lines.append("# This script was generated by the SDTM VS Agent using sdtm.oak")
+    script_lines.append("# Do not edit manually -- regenerate by running the agent again")
+    script_lines.append("")
+
+    # --- Section 2: Load required libraries ---
+    script_lines.append("# Load the sdtm.oak package for SDTM transformation functions")
+    script_lines.append("# Load dplyr for the pipe operator and data manipulation")
+    script_lines.append("library(sdtm.oak)")
+    script_lines.append("library(dplyr)")
+    script_lines.append("")
+
+    # --- Section 3: Read input files ---
+    script_lines.append("# Read the raw vital signs data from the CSV file")
+    script_lines.append(f'raw_data <- read.csv("{raw_path}", stringsAsFactors = FALSE)')
+    script_lines.append("")
+    script_lines.append("# Read the controlled terminology file")
+    script_lines.append(f'study_ct <- read.csv("{ct_path}", stringsAsFactors = FALSE)')
+    script_lines.append("")
+    script_lines.append("# Print how many rows of raw data were loaded")
+    script_lines.append('cat("Raw data loaded:", nrow(raw_data), "rows\\n")')
+    script_lines.append("")
+
+    # --- Section 4: Check that required raw columns exist ---
+    script_lines.append("# Check that all required raw columns are present")
+    script_lines.append("# If any are missing, the script will stop with a clear error")
+    # Check that the raw data has all the columns we need before doing anything else
+    script_lines.append("required_cols <- c('PATNUM', 'INSTANCE', 'VTLD', 'IT.TEMP', 'SYS_BP', 'DIA_BP', 'PULSE', 'SUBPOS')")
+    script_lines.append("missing_cols <- required_cols[!required_cols %in% colnames(raw_data)]")
+    script_lines.append("if (length(missing_cols) > 0) {")
+    script_lines.append("  stop(paste('Missing required columns in raw data:', paste(missing_cols, collapse = ', ')))")
+    script_lines.append("}")
+    script_lines.append("")
+
+    # --- Section 5: Generate oak ID variables ---
+    script_lines.append("# Add oak tracking columns to the raw data.")
+    script_lines.append("# These columns allow sdtm.oak to trace each output row back to its source.")
+    script_lines.append("# pat_var is the patient identifier column in the raw data.")
+    script_lines.append("# raw_src is a label for this source dataset.")
+    script_lines.append("oak_id_vars_result <- generate_oak_id_vars(")
+    script_lines.append("  raw_dat = raw_data,")
+    script_lines.append("  pat_var = 'PATNUM',")
+    script_lines.append("  raw_src = 'vitals'")
+    script_lines.append(")")
+    script_lines.append("")
+    script_lines.append("# Replace raw_data with the version that has oak ID columns")
+    script_lines.append("raw_data <- oak_id_vars_result")
+    script_lines.append("")
+
+    # --- Section 6: Build one pipeline block per VS test ---
+    # Each test gets its own dataset variable named like temp_dataset, sysbp_dataset, etc.
+    dataset_variable_names = []
+
+    for test in test_definitions:
+        test_code = test["test_code"]
+        test_label = test["test_label"]
+        result_col = test["raw_result_col"]
+        dataset_var_name = f"{test_code.lower()}_dataset"
+        dataset_variable_names.append(dataset_var_name)
+
+        script_lines.append(f"# --- Build the {test_code} ({test_label}) dataset ---")
+        script_lines.append(f"# This block creates one row per patient visit for {test_code}")
+        script_lines.append(f"# Starting from the full raw_data, we filter down to only {test_code} rows")
+        script_lines.append("")
+
+        # Start the pipeline
+        script_lines.append(f"{dataset_var_name} <- raw_data |>")
+
+        # Step: Hardcode VSTESTCD with CT validation
+        script_lines.append(f"  # Hardcode the test code as {test_code} and validate against CT code list C66741")
+        script_lines.append(f"  hardcode_ct(")
+        script_lines.append(f"    raw_dat = raw_data,")
+        script_lines.append(f"    tgt_var = 'VSTESTCD',")
+        script_lines.append(f"    tgt_val = '{test_code}',")
+        script_lines.append(f"    ct_spec = study_ct,")
+        script_lines.append(f"    ct_clst = 'C66741',")
+        script_lines.append(f"    id_vars = oak_id_vars()")
+        script_lines.append(f"  ) |>")
+
+        # Step: Filter to keep only rows where VSTESTCD was set (removes rows without this test)
+        script_lines.append(f"  # Remove rows where VSTESTCD was not set (rows that failed CT validation)")
+        script_lines.append(f"  filter(!is.na(VSTESTCD)) |>")
+
+        # Step: Hardcode VSTEST (full test label) with CT validation
+        script_lines.append(f"  # Hardcode the test label as '{test_label}' and validate against CT C67153")
+        script_lines.append(f"  hardcode_ct(")
+        script_lines.append(f"    raw_dat = raw_data,")
+        script_lines.append(f"    tgt_var = 'VSTEST',")
+        script_lines.append(f"    tgt_val = '{test_label}',")
+        script_lines.append(f"    ct_spec = study_ct,")
+        script_lines.append(f"    ct_clst = 'C67153',")
+        script_lines.append(f"    id_vars = oak_id_vars()")
+        script_lines.append(f"  ) |>")
+
+        # Step: Copy the result value from the raw column without CT validation
+        script_lines.append(f"  # Copy the raw result value into VSORRES (no CT validation, free text)")
+        script_lines.append(f"  assign_no_ct(")
+        script_lines.append(f"    raw_dat = raw_data,")
+        script_lines.append(f"    tgt_var = 'VSORRES',")
+        script_lines.append(f"    raw_var = '{result_col}',")
+        script_lines.append(f"    id_vars = oak_id_vars()")
+        script_lines.append(f"  ) |>")
+
+        # Step: Hardcode the unit with CT validation
+        script_lines.append(f"  # Hardcode the recorded unit and validate against CT C66770")
+        script_lines.append(f"  hardcode_ct(")
+        script_lines.append(f"    raw_dat = raw_data,")
+        script_lines.append(f"    tgt_var = 'VSORRESU',")
+        script_lines.append(f"    tgt_val = '{test['sdtm_unit']}',")
+        script_lines.append(f"    ct_spec = study_ct,")
+        script_lines.append(f"    ct_clst = '{test['unit_codelist']}',")
+        script_lines.append(f"    id_vars = oak_id_vars()")
+        script_lines.append(f"  )")
+
+        # Step: Add VSLOC for temperature using assign_ct
+        if test.get("has_location") and test.get("raw_loc_col"):
+            loc_col = test["raw_loc_col"]
+            script_lines.append("")
+            script_lines.append(f"# Add measurement location from {loc_col} column with CT validation C74456")
+            script_lines.append(f"{dataset_var_name} <- {dataset_var_name} |>")
+            script_lines.append(f"  assign_ct(")
+            script_lines.append(f"    raw_dat = raw_data,")
+            script_lines.append(f"    tgt_var = 'VSLOC',")
+            script_lines.append(f"    raw_var = '{loc_col}',")
+            script_lines.append(f"    ct_spec = study_ct,")
+            script_lines.append(f"    ct_clst = 'C74456',")
+            script_lines.append(f"    id_vars = oak_id_vars()")
+            script_lines.append(f"  )")
+
+        # Step: Add VSPOS for blood pressure and pulse using assign_ct
+        if test.get("has_position") and test.get("raw_pos_col"):
+            pos_col = test["raw_pos_col"]
+            script_lines.append("")
+            script_lines.append(f"# Add measurement position from {pos_col} column with CT validation C71148")
+            script_lines.append(f"{dataset_var_name} <- {dataset_var_name} |>")
+            script_lines.append(f"  assign_ct(")
+            script_lines.append(f"    raw_dat = raw_data,")
+            script_lines.append(f"    tgt_var = 'VSPOS',")
+            script_lines.append(f"    raw_var = '{pos_col}',")
+            script_lines.append(f"    ct_spec = study_ct,")
+            script_lines.append(f"    ct_clst = 'C71148',")
+            script_lines.append(f"    id_vars = oak_id_vars()")
+            script_lines.append(f"  )")
+
+        # Step: Add standardized result (VSSTRESC) and standardized unit (VSSTRESU)
+        script_lines.append("")
+        script_lines.append(f"# Add standardized result (VSSTRESC) and standardized unit (VSSTRESU)")
+
+        if test.get("needs_unit_conversion"):
+            # Temperature needs F to C conversion
+            script_lines.append(f"# For temperature, convert from Fahrenheit to Celsius")
+            script_lines.append(f"# Formula: Celsius = (Fahrenheit - 32) * 5 / 9, rounded to 1 decimal")
+            script_lines.append(f"{dataset_var_name} <- {dataset_var_name} %>%")
+            script_lines.append(f"  mutate(")
+            script_lines.append(f"    VSSTRESC = as.character(round((as.numeric(VSORRES) - 32) * 5 / 9, 1)),")
+            script_lines.append(f"    VSSTRESU = '{test['std_unit']}'")
+            script_lines.append(f"  )")
+        else:
+            # For blood pressure and pulse, standardized result equals recorded result
+            script_lines.append(f"# For {test_code}, the result is already in standard units so VSSTRESC equals VSORRES")
+            script_lines.append(f"{dataset_var_name} <- {dataset_var_name} %>%")
+            script_lines.append(f"  mutate(")
+            script_lines.append(f"    VSSTRESC = as.character(VSORRES),")
+            script_lines.append(f"    VSSTRESU = '{test['std_unit']}'")
+            script_lines.append(f"  )")
+
+        # Add VSSTRESN as numeric version of VSSTRESC
+        script_lines.append(f"# Add VSSTRESN as the numeric version of VSSTRESC for analysis")
+        script_lines.append(f"{dataset_var_name} <- {dataset_var_name} %>%")
+        script_lines.append(f"  mutate(VSSTRESN = suppressWarnings(as.numeric(VSSTRESC)))")
+        script_lines.append("")
+
+    # --- Section 7: Combine all test datasets ---
+    all_datasets = ", ".join(dataset_variable_names)
+    script_lines.append("# Combine all four test datasets into one combined dataset")
+    script_lines.append("# bind_rows stacks them vertically, keeping all columns from all datasets")
+    script_lines.append(f"combined_vs <- bind_rows({all_datasets})")
+    script_lines.append("")
+    script_lines.append('cat("Combined dataset has", nrow(combined_vs), "rows\\n")')
+    script_lines.append("")
+
+    # --- Section 8: Add common SDTM variables ---
+    script_lines.append("# Add the common SDTM variables that apply to all rows in the VS domain")
+    script_lines.append("combined_vs <- combined_vs %>%")
+    script_lines.append("  mutate(")
+    script_lines.append("    # Study identifier -- hardcoded for this trial")
+    script_lines.append("    STUDYID = 'CDISCPILOT01',")
+    script_lines.append("    # Domain identifier -- always VS for vital signs")
+    script_lines.append("    DOMAIN = 'VS',")
+    script_lines.append("    # Unique subject identifier -- combines study ID and patient number")
+    script_lines.append("    USUBJID = paste(STUDYID, PATNUM, sep = '-'),")
+    script_lines.append("    # Visit name comes from INSTANCE column in this raw dataset")
+    script_lines.append("    VISIT = INSTANCE,")
+    script_lines.append("    # Visit number derived from visit label using factor ordering")
+    script_lines.append("    VISITNUM = as.numeric(factor(INSTANCE, levels = unique(INSTANCE))),")
+    script_lines.append("    # Date converted from format like 26-Dec-2013 to ISO 8601 YYYY-MM-DD")
+    script_lines.append("    VSDTC = as.character(as.Date(VTLD, format = '%d-%b-%Y'))")
+    script_lines.append("  )")
+    script_lines.append("")
+
+    # --- Section 9: Add VSSEQ (sequence number per subject) ---
+    script_lines.append("# Add VSSEQ: a sequential number within each subject")
+    script_lines.append("# VSSEQ must start at 1 for each unique subject and increment by 1")
+    script_lines.append("combined_vs <- combined_vs %>%")
+    script_lines.append("  group_by(USUBJID) %>%")
+    script_lines.append("  mutate(VSSEQ = row_number()) %>%")
+    script_lines.append("  ungroup()")
+    script_lines.append("")
+
+    # --- Section 10: Ensure VSPOS and VSLOC columns exist even if not set for all tests ---
+    script_lines.append("# Ensure VSPOS and VSLOC columns exist in the combined dataset")
+    script_lines.append("# They may not exist if no test set them, so add them as NA if missing")
+    script_lines.append("if (!'VSPOS' %in% names(combined_vs)) {")
+    script_lines.append("  combined_vs$VSPOS <- NA_character_")
+    script_lines.append("}")
+    script_lines.append("if (!'VSLOC' %in% names(combined_vs)) {")
+    script_lines.append("  combined_vs$VSLOC <- NA_character_")
+    script_lines.append("}")
+    script_lines.append("")
+
+    # --- Section 11: Select and order final columns ---
+    script_lines.append("# Select only the required SDTM VS columns in the correct order")
+    script_lines.append("# This matches the SDTM VS domain specification")
+    script_lines.append("final_vs <- combined_vs %>%")
+    script_lines.append("  select(")
+    script_lines.append("    STUDYID, DOMAIN, USUBJID, VSSEQ,")
+    script_lines.append("    VSTESTCD, VSTEST,")
+    script_lines.append("    VSORRES, VSORRESU,")
+    script_lines.append("    VSSTRESC, VSSTRESN, VSSTRESU,")
+    script_lines.append("    VSPOS, VSLOC,")
+    script_lines.append("    VISIT, VISITNUM, VSDTC")
+    script_lines.append("  )")
+    script_lines.append("")
+
+    # --- Section 12: Write output to CSV ---
+    script_lines.append("# Write the final SDTM VS dataset to a CSV file")
+    script_lines.append("# row.names=FALSE prevents R from adding a row number column")
+    script_lines.append(f'write.csv(final_vs, file = "{output_path}", row.names = FALSE)')
+    script_lines.append("")
+    script_lines.append('cat("Wrote", nrow(final_vs), "rows to", "' + output_path + '", "\\n")')
+    script_lines.append('cat("SDTM VS transformation complete.\\n")')
+    script_lines.append("")
+
+    # Join all lines into the final script string
+    return "\n".join(script_lines)
+
+
+def _find_raw_col(mapping_lookup, test_code, sdtm_variable, default_col):
+    """
+    Look up which raw column the mapping plan says to use for a given
+    test code and SDTM variable. If not found in the plan, use the default.
+
+    This is a helper that prevents hardcoded column names from causing errors
+    when the LLM-generated mapping plan uses different column names.
+
+    Args:
+        mapping_lookup: Dictionary mapping test_code+sdtm_variable to plan entries.
+        test_code: The test code like TEMP or SYSBP.
+        sdtm_variable: The SDTM variable like VSORRES or VSLOC.
+        default_col: The default raw column name to use if not in the plan.
+
+    Returns:
+        The raw column name as a string.
+    """
+    key = f"{test_code}_{sdtm_variable}"
+    entry = mapping_lookup.get(key)
+    if entry and entry.get("raw_column"):
+        return entry["raw_column"]
+    return default_col
